@@ -8,7 +8,7 @@ description: Default Generate PPTX authority for source intake, planning, SVG au
 > Beautify profile. This file owns that runtime's Step 1–7 sequence, gates, role
 > switching, and mandatory commands. Explicit Quick loads its own profile instead.
 
-**Default Core Pipeline**: `Initial Materials → [Fact Research] → Create Project → Template Candidate Preparation → Stage-1 Communication + Template Confirmation → [Template Installation] → Stage-2 Solution → [Image Acquisition] → Executor Live Preview → Quality Check → Post-processing → Export`
+**Default Core Pipeline**: `Initial Materials → [Fact Research] → Create Project → Template Candidate Preparation → Stage-1 Communication + Template Confirmation → [Template Installation] → Stage-2 Solution → [Image Acquisition] → Executor (silent live-preview rendering service) → Quality Check → Post-processing → Export`
 
 **Generate-specific execution discipline**:
 
@@ -268,7 +268,7 @@ retaining recommendation-only rendering candidates. Only an installed
 project-local template state loads the template module, and only after Stage 1
 is confirmed; a bare template/style name does not.
 
-> ⚠️ **Mandatory artifact gates**: after final confirmation, author complete `design_spec.md` from `${SKILL_DIR}/templates/design_spec_reference.md`. After Gate 1 and any refinement approval, author `spec_lock.md` from `${SKILL_DIR}/templates/spec_lock_reference.md` plus approved Design Spec/context. Author each new artifact once without placeholders or `scaffold-*` (manual-only). Schema validity does not prove semantic fidelity.
+> ⚠️ **Mandatory artifact gates**: after final confirmation, author complete `design_spec.md` from `${SKILL_DIR}/templates/design_spec_reference.md`. Issue the `write` tool call in the same turn — never end a turn on a promise to write; ending the turn here leaves the run idle and the user sees no progress. After Gate 1 and any refinement approval, author `spec_lock.md` from `${SKILL_DIR}/templates/spec_lock_reference.md` plus approved Design Spec/context. Author each new artifact once without placeholders or `scaffold-*` (manual-only). Schema validity does not prove semantic fidelity.
 
 **Artifact ownership**: fact-channel and source/derived artifact boundaries are defined in [`references/artifact-ownership.md`](../references/artifact-ownership.md). This Step uses those ownership rules; it does not redefine them.
 
@@ -328,7 +328,7 @@ python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only --w
 
 **Hard rule — Stage 1 is intermediate**: exit `0` from this first wait is an
 instruction to continue, not a route-completion condition. Do not send a final
-chat reply, go idle, or yield the task here. In the same active run, read the two
+chat reply, go idle, or yield the task here. Run both `--wait-only` waits as blocking foreground exec calls inside the active turn — never `background: true`, never detached. The runtime does not resume an idle turn when a backgrounded waiter exits (its completion notice is deferred to the heartbeat scheduler), so the user's page submission would appear to do nothing. If a wait was accidentally backgrounded, poll it with the `process` tool until it exits before continuing. In the same active run, read the two
 Stage-1 receipts, complete the template/free-design handoff, author fresh Stage
 2, and invoke the final wait below. Only `stage: final` + `status: confirmed`
 may close this confirmation flow.
@@ -359,7 +359,7 @@ or `templates` with at least one server-resolved root.
    referenced detail files and complete the custom projections. Derive the
    remaining production defaults and create
    `confirm_ui/recommendations.stage2.json` without changing Stage 1; declare
-   `stage: "stage2"`, then wait for the final confirmation:
+   `stage: "stage2"`, then wait for the final confirmation (blocking foreground exec — never backgrounded, same hard rule as Stage 1):
 
    ```bash
    python3 ${SKILL_DIR}/scripts/confirm_ui/server.py <project_path> --wait-only
@@ -590,16 +590,15 @@ decision nor locks geometry/native readiness.
 
 **Design Parameter Confirmation (Mandatory)**: before the first SVG, output key design parameters from the spec (canvas dimensions, color scheme, font plan, body font size). See executor-base.md §2.
 
-**Live Preview Auto-Startup (Mandatory)**: before the first SVG, automatically start the browser editor in live mode and keep it running continuously through Executor + Step 7 export:
+**Live Preview Rendering Service Auto-Startup (Mandatory, silent)**: before the first SVG, start the live-preview server in live mode **with `--no-browser`** as an internal rendering backend (the visual-review stage rasterizes pages through it) and keep it running continuously through Executor + Step 7 export:
 ```bash
-python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live --daemon
+python3 ${SKILL_DIR}/scripts/svg_editor/server.py <project_path> --live --daemon --no-browser
 ```
-- Start when Executor begins; `svg_output/` may be empty. Default: first free port from `5050`; `--port N`: strict bind. Read the actual URL from output or `<project_path>/live_preview/lock.json`.
-- Before the first SVG, report that URL or the launch failure; never claim an unavailable preview.
-- Run it as a long-running side process/session; do not wait for it to exit before generating SVG pages. Do not wait for user confirmation after startup.
-- **Service must keep running** until one of: (a) the user clicks **Exit preview** in the browser, or (b) the user explicitly asks in chat to stop it. Generation continues even if the user closes the editor.
-- **Do NOT read or apply submitted annotations during generation.** Users may annotate at any time, but Executor proceeds without touching them. The window to apply annotations opens only after Step 7 completes — see [`workflows/stages/live-preview.md`](stages/live-preview.md).
-- The editor also supports **staged direct edits** (text content + SVG element attributes previewed immediately, then written to `svg_output/` only when the user clicks **Apply changes**; `Ctrl+Z` / Undo drops staged edits) alongside annotation; re-export stays chat-driven. Full scope and editor details: see [`workflows/stages/live-preview.md`](stages/live-preview.md) Notes.
+- Start when Executor begins; `svg_output/` may be empty. Default: first free port from `5050`; `--port N`: strict bind. The actual port is recorded in `<project_path>/live_preview/lock.json` for internal consumers only.
+- **Do NOT open a browser, do NOT print or report the preview URL to the user, and do NOT guide the user toward browser editing.** Generation and all user-facing editing stay in the chat: the user describes a change ("change page 3 title to X") and the Executor edits the SVG directly, then re-exports when asked.
+- Run it as a long-running side process/session; do not wait for it to exit before generating SVG pages. Do not wait for user confirmation after startup. If startup fails, note it internally and continue; the visual-review stage surfaces a missing server and its prerequisites describe recovery.
+- **Service must keep running** until one of: (a) the user explicitly asks in chat to stop it, (b) the idle timeout fires, or (c) the process is killed externally.
+- If the user explicitly asks for the drag editor / browser preview, switch to the on-demand user-facing flow in [`workflows/stages/live-preview.md`](stages/live-preview.md) (Step 1) — never auto-open a browser in the main pipeline.
 
 **Conditional reference reads**: `executor-structured.md` owns template specs
 and prototypes. `executor-visualization.md` resolves a selected canonical or
@@ -687,7 +686,7 @@ page's narration in its final SVG and generate complete speaker notes →
 `<project_path>/notes/total.md`. When the outcome is `disabled`, do not load the
 notes branch and do not require or create `notes/total.md`.
 
-**✅ Internal checkpoint — execution complete**: verify live preview timing,
+**✅ Internal checkpoint — execution complete**: verify the silent live-preview rendering service was started without exposing a browser or URL,
 the P01 method gate, uninterrupted remaining-page generation, consolidated
 repair of any complete failure set, exact §IX roster coverage, one-frame prose
 wrapping, a final checker result of 0 errors, and `notes/total.md` only when

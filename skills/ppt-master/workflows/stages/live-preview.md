@@ -1,22 +1,23 @@
 ---
-description: Main-pipeline editor stage for starting live preview and applying submitted annotations.
+description: Optional, on-demand browser editor stage — open the drag/annotate UI only when the user explicitly asks, and apply submitted annotations after Step 7 export completes.
 ---
 
-# Live Preview Stage
+# Live Preview Stage (optional, user-requested)
 
-> **Purpose**: (1) start/reopen the browser SVG editor when no preview service is currently running, and (2) apply user-submitted annotations after Step 7 export completes.
+> **Purpose**: (1) start/reopen the browser SVG editor **only when the user explicitly asks for drag editing or the browser preview**, and (2) apply user-submitted annotations after Step 7 export completes.
 >
-> **Not in scope**: Executor's mandatory auto-startup — that lives in [`generate-pptx`](../generate-pptx.md) Step 6. Do not re-launch a preview that is already running.
+> **Not in scope**: the main pipeline's silent rendering service — [`generate-pptx`](../generate-pptx.md) Step 6 auto-starts the same server with `--no-browser` as an internal backend and never shows the URL to the user. Do not re-launch a preview that is already running; reuse the live instance.
 
 ## When to Run
 
-- **Start (Step 1)** — preview service is not currently running and the user wants to look at the deck or click an element. Typical cases: post-export re-entry in a fresh chat, or the user clicked **Exit preview** earlier and now wants it back.
+- **Start (Step 1)** — the user explicitly asks for the browser editor / drag editing / seeing the deck in a browser. Typical cases: post-export re-entry in a fresh chat, or the user clicked **Exit preview** earlier and now wants it back. If the silent rendering service from generate-pptx Step 6 is already running, reuse the live instance (the launcher does this automatically) and just give the user the URL from `<project_path>/live_preview/lock.json`.
 - **Apply annotations (Step 2)** — Step 7 has produced at least one PPTX, and the user signals that submitted annotations should now be applied. Triggers include:
   - quoting the browser prompt (`Changes saved to svg_output...` / `修改已保存到 svg_output...`)
   - saying `apply my annotations` / `apply my edits` / `应用注解` / `开始应用` / 等价表达
 
 ## When NOT to Run
 
+- The user has not explicitly asked for the browser editor → keep everything in the chat; the main pipeline runs the silent `--no-browser` rendering service (generate-pptx Step 6) and never opens a browser.
 - The preview service is already running → just give the user the URL; do not restart.
 - The user gave a precise chat edit ("change page 3 title to X") → edit the SVG directly.
 - The user wants a full regeneration → use the main workflow.
@@ -69,7 +70,7 @@ Triggered by the user signals listed in "When to Run".
 
 ## Notes (editor invariants — referenced from Generate Step 6)
 
-- **UI**: four-language (中文 / 繁體中文 / English / 日本語); auto-detects from `navigator.language`, persists in `localStorage`, switched via the language dropdown on the right panel. The right panel is an **Edit / Annotate** surface: direct SVG edits and AI-needed annotations are visually separated, with a pending-status strip showing staged direct edits and pages with unsaved annotations. Slide navigation: first/prev/next/last buttons at the top of the center panel, plus `←` / `→` / `Home` / `End` (suppressed while typing in the annotation textarea).
+- **UI**: trilingual (中文 / English / 日本語); auto-detects from `navigator.language`, persists in `localStorage`, switched via the language dropdown on the right panel. The right panel is an **Edit / Annotate** surface: direct SVG edits and AI-needed annotations are visually separated, with a pending-status strip showing staged direct edits and pages with unsaved annotations. Slide navigation: first/prev/next/last buttons at the top of the center panel, plus `←` / `→` / `Home` / `End` (suppressed while typing in the annotation textarea).
 - **Buttons**: `Add annotation` stages annotation text in memory; `Apply changes` writes staged direct edits plus annotation markers to disk and keeps the service running; `Exit preview` is the only UI action that stops Flask.
 - **Direct edit (no AI)**: selection mode determines the right-panel surface. Single element = full object inspector (geometry, safe text content, computed text styles for the selected text node or descendant text inside a selected textbox/group, raw SVG attributes except protected fields like `id`, UI `class`, event handlers, and hrefs). SVG `<g>` group = group-level edit surface; select via `Alt/Option` + click or **Select parent group** from a child element. Multi-select = limited batch editor over top-level selected objects only: shared x/y plus `fill` / `stroke` / `opacity`; text style fields (`font-size` / `font-family` / `font-weight` / `text-anchor`) appear only when every selected object is `text`/`tspan`. Preview updates immediately; disk writes wait for **Apply changes**.
 - **Drag to move**: press and drag an already-selected element on the canvas to reposition it (selection stays a separate click, so the background is never dragged by accident); the whole selection moves together under multi-select. The pointer delta is mapped through each element's own CTM, so moves track the cursor regardless of viewport scale or group transforms. Each release stages one direct edit per moved element (the same `x`/`y`-or-`transform` write the geometry inputs produce), previewed live and written only on **Apply changes**; dragging on empty canvas is still rubber-band selection. A failed stage rolls the canvas back to the pre-drag position.
@@ -78,6 +79,7 @@ Triggered by the user signals listed in "When to Run".
 - **Undo**: `Ctrl+Z` or the **Undo** button drops the last staged direct edit on the current slide (per-slide LIFO, this session). Consecutive edits to the *same element and same field set* (e.g. nudging one color or coordinate several times) coalesce into a single undo step, keeping the original pre-edit value; switching element or field starts a new step. Applied old→new history is appended to `<project>/live_preview/edits.jsonl`; annotation save/update/remove history is appended to `<project>/live_preview/annotations.jsonl`; un-applied staged edits are in-memory only.
 - **Unsaved-work guard**: staged direct edits and annotation changes (added or removed) live in server memory until **Apply changes**; closing the tab triggers the browser's native "leave site?" prompt while any are unapplied, since an idle timeout or process kill would drop them.
 - **Re-export is chat-driven**: applying changes updates `svg_output/` only. Refreshing the PPTX (finalize + svg_to_pptx) stays a chat step — the editor never runs the export pipeline or presents browser-side export as part of applying edits.
+- **Generating-warning**: in `--live` mode, while `<project_path>/exports/` holds no PPTX yet (Step 7 not finished), the **Apply changes** confirm dialog warns that the running generation may overwrite freshly written edits and that the chat does not update automatically — re-export / annotation apply stay chat-driven after generation completes.
 - **Stop conditions**: the service stops when the user clicks **Exit preview** in the browser, asks in chat to stop it, the idle timeout fires, or the process is killed externally.
 - **Port**: without `--port`, use the first free port from `5050`; `--port N` binds `N` strictly and fails if unavailable. Read the actual URL from launch output or `<project_path>/live_preview/lock.json`.
 - **Idle timeout**: plain mode `900s`, `--live` mode `7200s`; override with `--timeout <seconds>` (`0` disables).

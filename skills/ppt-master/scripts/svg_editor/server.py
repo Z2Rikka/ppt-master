@@ -494,8 +494,13 @@ def create_app(
 
     @app.route('/api/config')
     def get_config():
+        try:
+            exports_ready = any((project_path / 'exports').glob('*.pptx'))
+        except OSError:
+            exports_ready = False
         return jsonify({
             'live': app.config['LIVE_MODE'],
+            'exports_ready': exports_ready,
         })
 
     @app.route('/api/health')

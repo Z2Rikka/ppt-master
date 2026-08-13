@@ -67,6 +67,7 @@
             slide_error_tooltip: "Failed to parse this slide: ",
             reload_banner: "This slide was updated on disk. Click to reload.",
             modal_confirm_submit: "Apply staged direct edits and AI annotations to disk?\n\nThe preview service will keep running. Click Exit preview when you want to stop it.",
+        modal_warn_generating: "\n\nNote: the agent is still generating (no PPTX exported yet). Changes written now may be overwritten by the running generation, and the chat does not update automatically — after generation finishes, return to the chat and ask to re-export or apply annotations.",
             modal_success_submit: "Changes saved to svg_output.\n\nThe preview service is still running.",
             modal_success_direct_only: "Changes saved to svg_output.\n\nDirect edits are now in the SVG source. Return to the chat and ask to re-export when you want a refreshed PPTX. The preview service is still running.",
             modal_success_annotations_only: "Annotations saved to svg_output.\n\nReturn to the chat and ask to apply annotations when you want AI to interpret them. The preview service is still running.",
@@ -142,6 +143,7 @@
             slide_error_tooltip: "このスライドの解析に失敗: ",
             reload_banner: "このスライドはディスク上で更新されました。クリックで再読み込み。",
             modal_confirm_submit: "一時保存済みの直接編集とAI注釈をディスクに書き込みますか？\n\nプレビューサービスは動き続けます。止めたいときは「プレビューを終了」を押してください。",
+        modal_warn_generating: "\n\n注意：Agentはまだ生成中です（PPTX未エクスポート）。今書き込む変更はその後の生成で上書きされる可能性があります。チャットも自動更新されません。生成完了後にチャットへ戻り「再エクスポート」または「注釈を適用」と依頼してください。",
             modal_success_submit: "変更を svg_output に保存しました。\n\nプレビューサービスは引き続き動作中です。",
             modal_success_direct_only: "変更を svg_output に保存しました。\n\n直接編集はSVGソースに反映済みです。PPTXを更新したいときは、チャットに戻って再エクスポートを依頼してください。プレビューサービスは引き続き動作中です。",
             modal_success_annotations_only: "注釈を svg_output に保存しました。\n\nAIに注釈を解釈・反映させたいときは、チャットに戻って注釈の適用を依頼してください。プレビューサービスは引き続き動作中です。",
@@ -217,6 +219,7 @@
             slide_error_tooltip: "该幻灯片解析失败:",
             reload_banner: "当前页已在磁盘上更新,点此重新加载。",
             modal_confirm_submit: "确认将暂存的直接修改和 AI 标注写入磁盘?\n\n预览服务会继续运行。需要关闭时请点击退出预览。",
+        modal_warn_generating: "\n\n注意：Agent 仍在生成中（尚未导出 PPTX），现在写入的修改可能被后续生成覆盖；对话也不会自动更新。请等生成完成后回到对话，说“重新导出”或“应用标注”。",
             modal_success_submit: "修改已保存到 svg_output。\n\n预览服务仍在运行。",
             modal_success_direct_only: "修改已保存到 svg_output。\n\n直接修改已经写入 SVG 源文件；需要刷新 PPTX 时，请回到对话窗口要求重新导出。预览服务仍在运行。",
             modal_success_annotations_only: "标注已保存到 svg_output。\n\n需要 AI 理解并执行这些标注时，请回到对话窗口要求应用标注。预览服务仍在运行。",
@@ -417,6 +420,7 @@
     var selectedElementIds = new Set(); // id attrs of selected SVG elements
     var slideAnnotations  = {};     // {element_id: annotation_text} for current slide
     var liveMode          = false;
+    var exportsReady      = false;
     var slidePollTimer    = null;
     var pendingModalAction = "submit";
     var slideMtimes       = {};     // {name: mtime} — last-seen mtime for each slide
@@ -1747,12 +1751,18 @@
     // ================================================================
     btnSave.addEventListener("click", function () {
         pendingModalAction = "submit";
-        modalMessage.textContent = t("modal_confirm_submit") +
-            (hasPendingMatrixEdits() ? t("modal_matrix_transform_note") : "");
-        modalConfirm.textContent = t("modal_submit");
-        modalConfirm.style.display = "";
-        modalCancel.style.display = "";
-        modalOverlay.style.display = "flex";
+        var showConfirm = function () {
+            modalMessage.textContent = t("modal_confirm_submit") +
+                (hasPendingMatrixEdits() ? t("modal_matrix_transform_note") : "") +
+                (liveMode && !exportsReady ? t("modal_warn_generating") : "");
+            modalConfirm.textContent = t("modal_submit");
+            modalConfirm.style.display = "";
+            modalCancel.style.display = "";
+            modalOverlay.style.display = "flex";
+        };
+        // Refresh exports_ready so the generating-warning reflects the pipeline
+        // state at the moment the user opens the confirm dialog.
+        loadConfig().then(showConfirm, showConfirm);
     });
 
     btnExitPreview.addEventListener("click", function () {
@@ -1929,6 +1939,7 @@
             .then(function (res) { return res.json(); })
             .then(function (data) {
                 liveMode = !!data.live;
+                exportsReady = !!data.exports_ready;
             })
             .catch(function () {
                 liveMode = false;
